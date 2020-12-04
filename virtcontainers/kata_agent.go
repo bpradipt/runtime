@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	units "github.com/docker/go-units"
 	"github.com/gogo/protobuf/proto"
 	aTypes "github.com/kata-containers/agent/pkg/types"
 	kataclient "github.com/kata-containers/agent/protocols/client"
@@ -33,6 +34,7 @@ import (
 	"github.com/kata-containers/runtime/virtcontainers/pkg/uuid"
 	"github.com/kata-containers/runtime/virtcontainers/store"
 	"github.com/kata-containers/runtime/virtcontainers/types"
+	"github.com/kata-containers/runtime/virtcontainers/utils"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/sirupsen/logrus"
@@ -1485,6 +1487,10 @@ func (k *kataAgent) createContainer(sandbox *Sandbox, c *Container) (p *Process,
 	epheStorages := k.handleEphemeralStorage(ociSpec.Mounts)
 	ctrStorages = append(ctrStorages, epheStorages...)
 
+	k.Logger().WithField("ociSpec Hugepage Resources", ociSpec.Linux.Resources.HugepageLimits).Debug("ociSpec HugepageLimit")
+	hugepages := k.handleHugepages(ociSpec.Mounts, ociSpec.Linux.Resources.HugepageLimits)
+	ctrStorages = append(ctrStorages, hugepages...)
+
 	localStorages := k.handleLocalStorage(ociSpec.Mounts, sandbox.id, c.rootfsSuffix)
 	ctrStorages = append(ctrStorages, localStorages...)
 
@@ -1604,6 +1610,61 @@ func (k *kataAgent) handleEphemeralStorage(mounts []specs.Mount) []*grpc.Storage
 		}
 	}
 	return epheStorages
+}
+
+// handleHugePages handles hugepages storage by
+// creating a Storage from corresponding source of the mount point
+func (k *kataAgent) handleHugepages(mounts []specs.Mount, hugepageLimits []specs.LinuxHugepageLimit) []*grpc.Storage {
+	//Map to hold the total memory of each type of hugepages
+	optionsMap := make(map[string]string)
+	var HugePageSizeUnitList = []string{"B", "K", "M", "G", "T", "P"}
+
+	for _, hp := range hugepageLimits {
+		if hp.Limit != 0 {
+			k.Logger().WithField("Pagesize", hp.Pagesize).Info("hugepage request")
+			k.Logger().WithField("Limit", hp.Limit).Info("hugepage request")
+			//example Pagesize 2MB, 1GB etc. The Limit are in Bytes
+			pageSize, _ := units.RAMInBytes(hp.Pagesize)
+			pageSizeStr := units.CustomSize("%g%s", float64(pageSize), 1024.0, HugePageSizeUnitList)
+			totalHpSize := fmt.Sprintf("%v", hp.Limit)
+			optionsMap[pageSizeStr] = totalHpSize
+		}
+	}
+
+	var hugepages []*grpc.Storage
+	for idx, mnt := range mounts {
+		//HugePages mount Type is Local
+		if mnt.Type == KataLocalDevType {
+			if _, fsType, fsOptions, _ := utils.GetDevicePathAndFsTypeOptions(mnt.Source); fsType == "hugetlbfs" {
+				k.Logger().WithField("fsOptions", fsOptions).Debug("hugepage mount options")
+				//Find the pagesize from the mountpoint to use the right set of options
+				//pagesize is the last element in the mount option. Can it change ?
+				pagesizeOpt := fsOptions[len(fsOptions)-1]
+				//Create mount option string
+				pageSize, _ := units.RAMInBytes(strings.TrimPrefix(pagesizeOpt, "pagesize="))
+			        pageSizeStr := units.CustomSize("%g%s", float64(pageSize), 1024.0, HugePageSizeUnitList)
+				options := "pagesize=" + pageSizeStr + "," + "size=" + optionsMap[pageSizeStr]
+				k.Logger().WithField("Hugepage options string", options).Debug("hugepage mount options")
+				// Set the mount source path to a path that resides inside the VM
+				mounts[idx].Source = filepath.Join(ephemeralPath(), filepath.Base(mnt.Source))
+				// Set the mount type to "bind"
+				mounts[idx].Type = "bind"
+
+				// Create a storage struct so that kata agent is able to create
+				// hugetlbfs backed volume inside the VM
+				hugepage := &grpc.Storage{
+					Driver:     KataEphemeralDevType,
+					Source:     "nodev",
+					Fstype:     "hugetlbfs",
+					MountPoint: mounts[idx].Source,
+					Options:    []string{options},
+				}
+				hugepages = append(hugepages, hugepage)
+			}
+		}
+
+	}
+	return hugepages
 }
 
 // handleLocalStorage handles local storage within the VM

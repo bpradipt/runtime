@@ -1933,6 +1933,14 @@ func (s *Sandbox) calculateSandboxMemory() int64 {
 
 		if m := c.Resources.Memory; m != nil && m.Limit != nil {
 			memorySandbox += *m.Limit
+			s.Logger().WithField("memory limit", memorySandbox).Info("Memory Sandbox + Memory Limit ")
+		}
+
+		//Add hugepages memory
+		//HugepageLimit is uint64 - https://github.com/opencontainers/runtime-spec/blob/master/specs-go/config.go#L242
+		for _, l := range c.Resources.HugepageLimits {
+			memorySandbox += int64(l.Limit)
+			s.Logger().WithField("hugepages memory limit", memorySandbox).Info("Memory Sandbox + Hugepages Memory Limit ")
 		}
 	}
 	return memorySandbox
