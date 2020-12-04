@@ -408,6 +408,61 @@ func TestHandleLocalStorage(t *testing.T) {
 	assert.Equal(t, localMountPoint, expected)
 }
 
+func TestHandleHugepages(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("Test disabled as requires root user")
+	}
+
+	dir, err := ioutil.TempDir("", "hugepages-test")
+	assert.Nil(t, err)
+	defer os.RemoveAll(dir)
+
+	k := kataAgent{}
+	var mounts []specs.Mount
+	var hugepageLimits []specs.LinuxHugepageLimit
+
+	hugepageDirs := [2]string{"hugepages-1Gi", "hugepages-2Mi"}
+	options := [2]string{"pagesize=1024M", "pagesize=2M"}
+
+	for i := 0; i < 2; i++ {
+		target := path.Join(dir, hugepageDirs[i])
+		err := os.MkdirAll(target, 0777)
+		if err = syscall.Mount("nodev", target, "hugetlbfs", uintptr(0), options[i]); err != nil {
+			fmt.Printf("Unable to mount %s: %v\n", target, err)
+		}
+		assert.Nil(t, err)
+		defer syscall.Unmount(target, 0)
+		defer os.RemoveAll(target)
+		mount := specs.Mount{
+			Type:   KataLocalDevType,
+			Source: target,
+		}
+		mounts = append(mounts, mount)
+
+	}
+	fmt.Printf("mounts: %v\n", mounts)
+
+	hugepageLimits = []specs.LinuxHugepageLimit{
+		{
+			Pagesize: "1GB",
+			Limit:    322122547,
+		},
+		{
+			Pagesize: "2MB",
+			Limit:    134217728,
+		},
+	}
+	fmt.Printf("hugepageLimits: %v\n", hugepageLimits)
+
+	hugepages := k.handleHugepages(mounts, hugepageLimits)
+
+	fmt.Printf("%v\n", hugepages)
+
+	assert.NotNil(t, hugepages)
+	assert.Equal(t, len(hugepages), 2)
+
+}
+
 func TestHandleDeviceBlockVolume(t *testing.T) {
 	k := kataAgent{}
 

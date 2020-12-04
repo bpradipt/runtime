@@ -36,16 +36,19 @@ func TestFindContextID(t *testing.T) {
 
 func TestGetDevicePathAndFsTypeEmptyMount(t *testing.T) {
 	assert := assert.New(t)
-	_, _, err := GetDevicePathAndFsType("")
+	_, _, _, err := GetDevicePathAndFsTypeOptions("")
 	assert.Error(err)
 }
 
 func TestGetDevicePathAndFsTypeSuccessful(t *testing.T) {
 	assert := assert.New(t)
+        opts := []string{"rw", "nosuid", "nodev", "noexec", "relatime"}
 
-	path, fstype, err := GetDevicePathAndFsType("/proc")
+	path, fstype, fsOptions, err := GetDevicePathAndFsTypeOptions("/proc")
 	assert.NoError(err)
 
 	assert.Equal(path, "proc")
 	assert.Equal(fstype, "proc")
+	assert.True(DeepCompare(fsOptions, opts))
 }
+

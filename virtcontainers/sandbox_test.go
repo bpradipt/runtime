@@ -173,6 +173,45 @@ func TestCalculateSandboxMem(t *testing.T) {
 	}
 }
 
+func TestSandboxHugepageLimit(t *testing.T) {
+        contConfig1 := newTestContainerConfigNoop("cont-00001")
+        contConfig2 := newTestContainerConfigNoop("cont-00002")
+	limit := int64(4000)
+        contConfig1.Resources.Memory = &specs.LinuxMemory{Limit: &limit}
+        contConfig2.Resources.Memory = &specs.LinuxMemory{Limit: &limit}
+        hConfig := newHypervisorConfig(nil, nil)
+
+        defer cleanUp()
+        // create a sandbox
+        s, err := testCreateSandbox(t,
+                testSandboxID,
+                MockHypervisor,
+                hConfig,
+                NoopAgentType,
+                NetworkConfig{},
+                []ContainerConfig{contConfig1, contConfig2},
+                nil)
+
+        assert.NoError(t, err)
+
+        hugepageLimits := []specs.LinuxHugepageLimit{
+                {
+                        Pagesize: "1GB",
+                        Limit:    322122547,
+                },
+                {
+                        Pagesize: "2MB",
+                        Limit:    134217728,
+                },
+        }
+
+        for i := range  s.config.Containers {
+                s.config.Containers[i].Resources.HugepageLimits = hugepageLimits
+        }
+        err = s.updateResources()
+        assert.NoError(t, err)
+}
+
 func TestCreateSandboxEmptyID(t *testing.T) {
 	hConfig := newHypervisorConfig(nil, nil)
 	_, err := testCreateSandbox(t, "", MockHypervisor, hConfig, NoopAgentType, NetworkConfig{}, nil, nil)
